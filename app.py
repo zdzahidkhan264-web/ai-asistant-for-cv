@@ -2,26 +2,52 @@ import streamlit as st
 import pandas as pd
 import json
 import io
-from pypdf import PdfReader
-import docx
-import google.generativeai as genai
+
+# Safe imports to prevent crashes on startup
+try:
+    from pypdf import PdfReader
+except ImportError:
+    PdfReader = None
+
+try:
+    import docx
+except ImportError:
+    docx = None
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
 
 # Page Setup
 st.set_page_config(page_title="AI CV Screener", page_icon="📄", layout="wide")
 st.title("📄 AI-Powered CV Screening App")
 st.caption("Screen multiple candidate CVs against job criteria with Google Gemini AI")
 
-# Sidebar - API Key Configuration
+# Check missing packages
+missing_pkgs = []
+if PdfReader is None:
+    missing_pkgs.append("pypdf")
+if docx is None:
+    missing_pkgs.append("python-docx")
+if genai is None:
+    missing_pkgs.append("google-generativeai")
+
+if missing_pkgs:
+    st.error(f"⚠️ **Missing Dependencies on Streamlit Cloud:** `{', '.join(missing_pkgs)}`")
+    st.info("Make sure `requirements.txt` is in your repository root, then click **Manage app** ➔ **Reboot app**.")
+
+# Sidebar - API Key
 with st.sidebar:
     st.header("⚙️ Configuration")
     api_key = st.text_input(
         "Google Gemini API Key",
-        value=st.secrets.get("GEMINI_API_KEY", ""),
+        value=st.secrets.get("GEMINI_API_KEY", "") if hasattr(st, "secrets") else "",
         type="password",
         help="Get a free key from https://aistudio.google.com"
     )
     st.markdown("---")
-    st.info("**Rule:** If any info is missing in a CV, the AI will label it as **'Not Found'** without assuming or inventing data.")
+    st.markdown("**Strict Evaluation Rule:**\nIf any information is unavailable in the CV, the AI will display **'Not Found'** without inventing data.")
 
 # Step 1: Job Criteria
 st.subheader("1. Enter Job Requirements & Criteria")
@@ -41,7 +67,7 @@ with col4:
 # Step 2: Upload Multiple CVs
 st.subheader("2. Upload Candidate CVs")
 uploaded_files = st.file_uploader(
-    "Upload multiple CVs in PDF, Word (DOCX), or TXT format",
+    "Upload CVs in PDF, Word (DOCX), or TXT format",
     type=["pdf", "docx", "txt"],
     accept_multiple_files=True
 )
@@ -51,9 +77,13 @@ def extract_text(file) -> str:
     name = file.name.lower()
     bytes_data = file.read()
     if name.endswith(".pdf"):
+        if PdfReader is None:
+            return "Error: pypdf not installed. Please check requirements.txt."
         reader = PdfReader(io.BytesIO(bytes_data))
         return "\n".join([page.extract_text() or "" for page in reader.pages])
     elif name.endswith(".docx"):
+        if docx is None:
+            return "Error: python-docx not installed. Please check requirements.txt."
         doc = docx.Document(io.BytesIO(bytes_data))
         return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
     else:
@@ -113,6 +143,8 @@ if st.button("🚀 Run AI Screening", type="primary", use_container_width=True):
         st.error("Please enter your Google Gemini API Key in the sidebar.")
     elif not uploaded_files:
         st.warning("Please upload at least one CV file.")
+    elif missing_pkgs:
+        st.error(f"Cannot run screening: Missing dependencies ({', '.join(missing_pkgs)}).")
     else:
         results = []
         progress = st.progress(0)
@@ -134,7 +166,7 @@ if st.button("🚀 Run AI Screening", type="primary", use_container_width=True):
             results.append(res)
             progress.progress((idx + 1) / len(uploaded_files))
         
-        st.success(f"Screening completed for {len(results)} candidate(s)!")
+        st.success(f"Screening complete for {len(results)} candidate(s)!")
         
         # Results Table
         df = pd.DataFrame(results)
@@ -151,7 +183,6 @@ if st.button("🚀 Run AI Screening", type="primary", use_container_width=True):
         
         st.subheader("📊 Candidate Evaluation Results")
         
-        # Color coding
         def highlight_overall(val):
             if val == "Yes":
                 return "background-color: #dcfce7; color: #15803d; font-weight: bold;"
